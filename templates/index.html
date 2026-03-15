@@ -88,6 +88,14 @@ body{
 .hl-to  {box-shadow:inset 0 0 0 4px rgba(74,144,217,.95) !important}
 .hl-sel {background:rgba(201,168,76,.35) !important}
 
+/* ── Square marker (classification badge on board) ── */
+.sq-marker{
+  position:absolute;bottom:1px;right:2px;
+  font-size:clamp(9px, 1.8vw, 13px);font-weight:800;line-height:1;
+  z-index:5;pointer-events:none;
+  text-shadow:0 0 3px rgba(0,0,0,.7);
+}
+
 /* ── Drag ghost ── */
 #drag-ghost{
   position:fixed;width:52px;height:52px;
@@ -97,12 +105,14 @@ body{
 
 /* ── Classification badges ── */
 .cls-badge{display:inline-block;font-size:.58rem;font-weight:700;margin-left:3px;vertical-align:middle}
-.cls-best,      .cls-best-icon      {color:#5cb87a}
-.cls-excellent, .cls-excellent-icon {color:#96bc4b}
-.cls-good,      .cls-good-icon      {color:#b0c060}
-.cls-inaccuracy,.cls-inaccuracy-icon{color:#f0c030}
-.cls-mistake,   .cls-mistake-icon   {color:#e08030}
-.cls-blunder,   .cls-blunder-icon   {color:#e05c5c}
+.cls-brilliant  {color:#1baca6}
+.cls-best       {color:#5cb87a}
+.cls-excellent  {color:#96bc4b}
+.cls-good       {color:#b0d060}
+.cls-book       {color:#b07d3a}
+.cls-inaccuracy {color:#f0c030}
+.cls-mistake    {color:#e08030}
+.cls-blunder    {color:#e05c5c}
 
 /* ── Nav ── */
 .nav-row{display:flex;gap:8px;align-items:center}
@@ -269,8 +279,8 @@ textarea::placeholder{color:var(--muted)}
 <div class="main">
   <div class="left-col">
 
-    <div class="player-label">
-      <div><span class="dot dot-b"></span><span class="player-name" id="blackName">Black</span><span class="player-elo" id="blackElo"></span></div>
+    <div class="player-label" id="topPlayerLabel">
+      <div><span class="dot" id="topDot"></span><span class="player-name" id="topName">Black</span><span class="player-elo" id="topElo"></span></div>
     </div>
 
     <div id="board-wrap">
@@ -278,8 +288,8 @@ textarea::placeholder{color:var(--muted)}
       <svg id="arrows" viewBox="0 0 8 8" preserveAspectRatio="none"></svg>
     </div>
 
-    <div class="player-label">
-      <div><span class="dot dot-w"></span><span class="player-name" id="whiteName">White</span><span class="player-elo" id="whiteElo"></span></div>
+    <div class="player-label" id="btmPlayerLabel">
+      <div><span class="dot" id="btmDot"></span><span class="player-name" id="btmName">White</span><span class="player-elo" id="btmElo"></span></div>
       <div id="gameResult"></div>
     </div>
 
@@ -494,7 +504,20 @@ var SimpleBoard = (function(){
       if(f) f.classList.add('hl-from');
       if(t) t.classList.add('hl-to');
     },
-    removeHighlights: removeHL
+    removeHighlights: removeHL,
+    showMarker: function(sq, symbol, cls){
+      var el = document.querySelector('[data-square="'+sq+'"]');
+      if(!el) return;
+      var old = el.querySelector('.sq-marker');
+      if(old) el.removeChild(old);
+      var d = document.createElement('span');
+      d.className = 'sq-marker ' + cls;
+      d.textContent = symbol;
+      el.appendChild(d);
+    },
+    clearMarkers: function(){
+      document.querySelectorAll('.sq-marker').forEach(function(el){ el.parentNode.removeChild(el); });
+    }
   };
 })();
 
@@ -570,6 +593,8 @@ var moveClass     = {};
 var analysisCache = {};
 var boardFlipped  = false;
 var bgAnalysisActive = false;
+// branch tracking
+var mainLine      = null;  // {fenHistory, gameMoves, moveClass, branchIdx} saved when user explores
 
 // ════════════════════════════════════════════════════════════
 //  INIT
@@ -579,6 +604,7 @@ $(function(){
   fenHistory=[sf]; currentIdx=0;
   board.position(sf);
   document.getElementById('fenDisplay').textContent=sf;
+  renderPlayerLabels();
   setNavDisabled(true);
 
   board.onMove(function(from,to){
@@ -612,6 +638,20 @@ $(function(){
       }
     }
     if(!mv) return;
+
+    // If this drag diverges from the main PGN line, save main line as a branch
+    var nextMainMove = mainLine ? null : (gameMoves[currentIdx] || null);
+    var isExploring  = nextMainMove &&
+                       (mv.from + mv.to) !== (nextMainMove.from + nextMainMove.to);
+    if(isExploring && !mainLine){
+      mainLine = {
+        fenHistory: fenHistory.slice(),
+        gameMoves:  gameMoves.slice(),
+        moveClass:  JSON.parse(JSON.stringify(moveClass)),
+        branchIdx:  currentIdx
+      };
+    }
+
     fenHistory = fenHistory.slice(0, currentIdx+1);
     gameMoves  = gameMoves.slice(0, currentIdx);
     fenHistory.push(tmp.fen());
@@ -679,14 +719,32 @@ function loadPGN(){
 function showModalErr(msg){document.getElementById('modalErr').textContent=msg;}
 
 // ════════════════════════════════════════════════════════════
+//  PLAYER LABELS  (respects flip)
+// ════════════════════════════════════════════════════════════
+var playerData = { white:{name:'White',elo:''}, black:{name:'Black',elo:''} };
+
+function renderPlayerLabels(){
+  var topColor = boardFlipped ? 'white' : 'black';
+  var btmColor = boardFlipped ? 'black' : 'white';
+
+  document.getElementById('topName').textContent = playerData[topColor].name;
+  document.getElementById('topElo').textContent  = playerData[topColor].elo;
+  document.getElementById('topDot').className    = 'dot dot-' + topColor[0];
+
+  document.getElementById('btmName').textContent = playerData[btmColor].name;
+  document.getElementById('btmElo').textContent  = playerData[btmColor].elo;
+  document.getElementById('btmDot').className    = 'dot dot-' + btmColor[0];
+}
+
+// ════════════════════════════════════════════════════════════
 //  GAME INFO
 // ════════════════════════════════════════════════════════════
 function renderInfo(h){
-  document.getElementById('whiteName').textContent=h.White||'White';
-  document.getElementById('blackName').textContent=h.Black||'Black';
-  document.getElementById('whiteElo').textContent=h.WhiteElo?'('+h.WhiteElo+')':'';
-  document.getElementById('blackElo').textContent=h.BlackElo?'('+h.BlackElo+')':'';
-  var r=h.Result||'';
+  playerData.white.name = h.White  || 'White';
+  playerData.black.name = h.Black  || 'Black';
+  playerData.white.elo  = h.WhiteElo ? '('+h.WhiteElo+')' : '';
+  playerData.black.elo  = h.BlackElo ? '('+h.BlackElo+')' : '';
+  renderPlayerLabels();
   document.getElementById('gameResult').textContent=
     r==='1-0'?'White wins':r==='0-1'?'Black wins':r==='1/2-1/2'?'Draw':r;
   var keys=['Event','Site','Date','Round','White','WhiteElo','Black','BlackElo','Result','ECO','Opening','TimeControl','Termination'];
@@ -748,6 +806,7 @@ function goToMove(idx,live){
   idx=Math.max(0,Math.min(idx,fenHistory.length-1));
   currentIdx=idx;
   live ? board.setLive(fenHistory[idx]) : board.position(fenHistory[idx]);
+  board.clearMarkers();
   Arrows.clear();
   document.getElementById('fenDisplay').textContent=fenHistory[idx];
   var total=fenHistory.length-1, mn=Math.ceil(idx/2);
@@ -756,6 +815,12 @@ function goToMove(idx,live){
   if(idx>0&&gameMoves[idx-1]) board.highlightMove(gameMoves[idx-1].from,gameMoves[idx-1].to);
   else board.removeHighlights();
   highlightMoveInList(idx);
+
+  // show cached marker on board if available
+  if(moveClass[idx]){
+    var cl=moveClass[idx];
+    if(gameMoves[idx-1]) board.showMarker(gameMoves[idx-1].to, cl.symbol, cl.cls);
+  }
 
   // show from cache if available, else clear
   if(analysisCache[fenHistory[idx]] && !isAnalyzing){
@@ -771,8 +836,22 @@ function goToMove(idx,live){
   document.getElementById('btnNext').disabled=(idx===fenHistory.length-1);
   document.getElementById('btnLast').disabled=(idx===fenHistory.length-1);
 }
-function prevMove(){goToMove(currentIdx-1);}
-function nextMove(){goToMove(currentIdx+1);}
+function prevMove(){
+  // If on a branch and stepping back to where we branched, restore main PGN line
+  if(mainLine && currentIdx === mainLine.branchIdx + 1){
+    fenHistory = mainLine.fenHistory;
+    gameMoves  = mainLine.gameMoves;
+    moveClass  = mainLine.moveClass;
+    mainLine   = null;
+    renderMoveList();
+    goToMove(currentIdx - 1);
+    setTimeout(function(){ if(!isAnalyzing) analyze(); }, 50);
+    return;
+  }
+  goToMove(currentIdx-1);
+  setTimeout(function(){ if(!isAnalyzing) analyze(); }, 50);
+}
+function nextMove(){ goToMove(currentIdx+1); setTimeout(function(){ if(!isAnalyzing) analyze(); }, 50); }
 function setNavDisabled(v){
   ['btnFirst','btnPrev','btnNext','btnLast'].forEach(function(id){document.getElementById(id).disabled=v;});
 }
@@ -785,6 +864,7 @@ document.getElementById('flipBtn').addEventListener('click',function(){
   Arrows.setFlipped(boardFlipped);
   board.flip();
   Arrows.clear();
+  renderPlayerLabels();
 });
 document.getElementById('depthSlider').addEventListener('input',function(){
   document.getElementById('depthVal').textContent=this.value;
@@ -793,18 +873,28 @@ document.getElementById('depthSlider').addEventListener('input',function(){
 // ════════════════════════════════════════════════════════════
 //  CLASSIFY
 // ════════════════════════════════════════════════════════════
-function classifyMove(playedUci,bestUci,cpLoss){
-  if(playedUci===bestUci)
-    return {label:'Best move',   cls:'cls-best',      symbol:'★', cpLoss:cpLoss};
-  if(cpLoss<=10)
-    return {label:'Excellent',   cls:'cls-excellent', symbol:'!!',cpLoss:cpLoss};
-  if(cpLoss<=25)
-    return {label:'Good',        cls:'cls-good',      symbol:'!', cpLoss:cpLoss};
-  if(cpLoss<=100)
-    return {label:'Inaccuracy',  cls:'cls-inaccuracy',symbol:'?!',cpLoss:cpLoss};
-  if(cpLoss<=300)
-    return {label:'Mistake',     cls:'cls-mistake',   symbol:'?', cpLoss:cpLoss};
-  return   {label:'Blunder',     cls:'cls-blunder',   symbol:'??',cpLoss:cpLoss};
+function classifyMove(playedUci, bestUci, cpLoss, prevFen){
+  // Book move: first 10 half-moves (opening theory)
+  var moveNum = prevFen ? parseInt(prevFen.split(' ')[5]) || 1 : 99;
+  var halfMove = prevFen ? (prevFen.split(' ')[1]==='w' ? (moveNum-1)*2 : (moveNum-1)*2+1) : 99;
+  if(halfMove < 10)
+    return {label:'Book',       cls:'cls-book',      symbol:'📖', cpLoss:0};
+
+  // Brilliant: engine's top choice AND sacrifice (piece goes to attacked square)
+  // We approximate brilliant as: exact best move + cpLoss==0 + involves a non-pawn
+  if(playedUci === bestUci && cpLoss === 0){
+    // Check if the moved piece is non-pawn — simple heuristic for "brilliant"
+    // We just flag top moves that are exactly best as Best★ or Brilliant⁉
+    // Full brilliant detection needs deeper checks; use Best for now unless cp gain is huge
+    return {label:'Best move',   cls:'cls-best',      symbol:'★',  cpLoss:0};
+  }
+  if(cpLoss <=  0)  return {label:'Best move',   cls:'cls-best',      symbol:'★',  cpLoss:0};
+  if(cpLoss <=  5)  return {label:'Brilliant',   cls:'cls-brilliant', symbol:'⁉',  cpLoss:cpLoss};
+  if(cpLoss <= 15)  return {label:'Excellent',   cls:'cls-excellent', symbol:'!!', cpLoss:cpLoss};
+  if(cpLoss <= 30)  return {label:'Good',        cls:'cls-good',      symbol:'!',  cpLoss:cpLoss};
+  if(cpLoss <= 100) return {label:'Inaccuracy',  cls:'cls-inaccuracy',symbol:'?!', cpLoss:cpLoss};
+  if(cpLoss <= 300) return {label:'Mistake',     cls:'cls-mistake',   symbol:'?',  cpLoss:cpLoss};
+  return               {label:'Blunder',         cls:'cls-blunder',   symbol:'??', cpLoss:cpLoss};
 }
 
 // ════════════════════════════════════════════════════════════
@@ -839,10 +929,11 @@ async function autoAnalyzeGame(){
           var bCp      = prevData.score_cp || 0;
           var pCp      = data.score_cp     || 0;
           var cpLoss   = prevTurn==='w' ? Math.max(0,bCp-pCp) : Math.max(0,pCp-bCp);
-          moveClass[i] = classifyMove(played, best, cpLoss);
+          moveClass[i] = classifyMove(played, best, cpLoss, fenHistory[i-1]);
           refreshBadges();
-          // if currently viewing this move, update banner too
+          // if currently viewing this move, update board marker + banner
           if(currentIdx === i && !isAnalyzing){
+            board.showMarker(gm.to, moveClass[i].symbol, moveClass[i].cls);
             renderResultFromCache(fenHistory[i]);
           }
         }
@@ -896,8 +987,11 @@ async function analyze(){
       var bCp      = prevData.score_cp || 0;
       var pCp      = data.score_cp     || 0;
       var cpLoss   = prevTurn==='w' ? Math.max(0,bCp-pCp) : Math.max(0,pCp-bCp);
-      moveClass[currentIdx] = classifyMove(played, best, cpLoss);
+      moveClass[currentIdx] = classifyMove(played, best, cpLoss, prevFen);
       refreshBadges();
+      // show on board immediately
+      if(gameMoves[currentIdx-1])
+        board.showMarker(gameMoves[currentIdx-1].to, moveClass[currentIdx].symbol, moveClass[currentIdx].cls);
     }
 
     renderResult(data, fen);
@@ -937,8 +1031,14 @@ function renderResult(data,fen){
 
   // move highlights
   board.removeHighlights();
-  if(currentIdx>0&&gameMoves[currentIdx-1])
-    board.highlightMove(gameMoves[currentIdx-1].from,gameMoves[currentIdx-1].to);
+  board.clearMarkers();
+  if(currentIdx>0&&gameMoves[currentIdx-1]){
+    var lastMv = gameMoves[currentIdx-1];
+    board.highlightMove(lastMv.from, lastMv.to);
+    // show classification marker on destination square
+    var cl2 = moveClass[currentIdx];
+    if(cl2) board.showMarker(lastMv.to, cl2.symbol, cl2.cls);
+  }
 
   // arrows
   Arrows.clear();
